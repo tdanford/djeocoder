@@ -25,7 +25,7 @@ def proper_city(block):
     should be in there. i.e., neither the left nor right side city is
     one of our metros or city within a multiple-city metro.
     """
-    from db_models import Location
+    from ebpub.db.models import Location
     metro = get_metro()
     if metro['multiple_cities']:
         cities = set([l.name.upper() for l in Location.objects.filter(location_type__slug=metro['city_location_type']).exclude(location_type__name__startswith='Unknown')])
@@ -328,7 +328,7 @@ class Place(models.Model):
 
     def save(self):
         if not self.normalized_name:
-            from parser.parsing import normalize
+            from ebpub.geocoder.parser.parsing import normalize
             self.normalized_name = normalize(self.pretty_name)
         super(Place, self).save()
 
