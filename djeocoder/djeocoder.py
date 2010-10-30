@@ -3,6 +3,8 @@ from parser.parsing import normalize, parse, ParsingError
 
 import re
 
+from streets import Block, StreetMisspelling, Intersection
+
 class GeocoderException(Exception):
     pass
 
