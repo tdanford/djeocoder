@@ -328,7 +328,7 @@ class Place(models.Model):
 
     def save(self):
         if not self.normalized_name:
-            from ebpub.geocoder.parser.parsing import normalize
+            from parser.parsing import normalize
             self.normalized_name = normalize(self.pretty_name)
         super(Place, self).save()
 
