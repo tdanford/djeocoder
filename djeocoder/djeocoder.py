@@ -2,6 +2,8 @@ from exceptions import Exception
 
 from streets import Block, StreetMisspelling, Intersection
 
+from geocoder_models import GeocoderCache
+
 class GeocoderException(Exception):
     pass
 
