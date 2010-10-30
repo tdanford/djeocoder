@@ -1,4 +1,7 @@
 from exceptions import Exception
+from parser.parsing import normalize, parse, ParsingError
+
+import re
 
 class GeocoderException(Exception):
     pass
@@ -89,11 +92,11 @@ class AddressGeocoder:
 block_re = re.compile(r'^(\d+)[-\s]+(?:blk|block)\s+(?:of\s+)?(.*)$', re.IGNORECASE)
 intersection_re = re.compile(r'(?<=.) (?:and|\&|at|near|@|around|towards?|off|/|(?:just )?(?:north|south|east|west) of|(?:just )?past) (?=.)', re.IGNORECASE)
 class LocalGeocoder: 
-	def geocode(self, location):
-        if intersection_re.search(location_string):
+    def geocode(self, location):
+        if intersection_re.search(location):
             raise GeocoderException('Intersection geocoding not implemented')
-        elif block_re.search(location_string):
+        elif block_re.search(location):
             raise GeocoderException('Block geocoding not implemented')
         else:
             geocoder = AddressGeocoder()
-        return geocoder.geocode(location_string)
+        return geocoder.geocode(location)
