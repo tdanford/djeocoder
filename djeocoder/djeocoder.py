@@ -1,5 +1,7 @@
 from exceptions import Exception
 
+from streets import Block, StreetMisspelling, Intersection
+
 class GeocoderException(Exception):
     pass
 
