@@ -47,23 +47,34 @@ class PostgisBlockSearcher:
 		return (from_num <= number <= to_num), from_num, to_num
 
 	def search(self,street,number=None,predir=None,suffix=None,postdir=None,city=None,state=None,zipcode=None):
-		query = 'select id, pretty_name, from_num, to_num, left_from_num, left_to_num, right_from_num, right_to_num, ST_AsEWKT(geom) from blocks where street=\'%s\'' % street.upper()	
-		if predir: query += ' and predir=\'%s\'' % predir.upper()
-		if suffix: query += ' and suffix=\'%s\'' % predir.upper()
-		if postdir: query += ' and postdir=\'%s\'' % predir.upper()
+		query = 'select id, pretty_name, from_num, to_num, left_from_num, left_to_num, right_from_num, right_to_num, ST_AsEWKT(geom) from blocks where street=%s' 
+		params = [street.upper()]
+		if predir: 
+			query += ' and predir=%s' 
+			params.apepnd(predir.upper())
+		if suffix: 
+			query += ' and suffix=%s' 
+			params.append(suffix.upper())
+		if postdir: 
+			query += ' and postdir=%s' 
+			params.append(postdir.upper())
 		if city: 
 			cu = city.upper()
-			query += ' and (left_city=\'%s\' or right_city=\'%s\')' % cu
+			query += ' and (left_city=%s or right_city=%s)' 
+			params.extend([cu, cu])
 		if state: 
 			su = state.upper()
-		query += ' and (left_state=\'%s\' or right_state=\'%s\')' % su
+			query += ' and (left_state=%s or right_state=%s)' 
+			params.extend([su, su])
 		if zipcode: 
-			query += ' and (left_zip=\'%s\' or right_zip=\'%s\')' % zipcode
+			query += ' and (left_zip=%s or right_zip=%s)' 
+			params.extend([zipcode, zipcode])
 		if number: 
-			query += ' and from_num <= %d and to_num >= %d' % (number, number)
+			query += ' and from_num <= %d and to_num >= %d' 
+			params.extend([number, number])
 
 		cursor = self.conn.cursor()
-		cursor.execute(query)
+		cursor.execute(query, tuple(params))
 
 		blocks = []
 		for block in cursor.fetchall(): 
@@ -89,5 +100,52 @@ class PostgisBlockSearcher:
 					
 		cursor.close()
 		return final_blocks
+	
+class PostgisIntersectionSearcher:
+	def __init__(self,conn):
+		self.connection = conn
+	def close(self):
+		self.connection.close()
+	def search(self, predir_a=None, street_a=None, suffix_a=None, postdir_a=None, predir_b=None, street_b=None, suffix_b=None, postdir_b=None):
+		cursor = self.connection.cursor()
+		query = 'select id, pretty_name, ST_AsEWKT(location) from intersections'
+		filters = []
+		params = []
+		if predir_a: 
+			filter.append('(predir_a=%s OR predir_b=%s)')
+			params.extend([predir_a, predir_a])
+		if predir_b: 
+			filter.append('(predir_a=%s OR predir_b=%s)')
+			params.extend([predir_b, predir_b])
+		if street_a: 
+			filter.append('(street_a=%s OR street_b=%s)')
+			params.extend([street_a, street_a])
+		if street_b: 
+			filter.append('(predir_a=%s OR street_b=%s)')
+			params.extend([street_b, street_b])
+		if suffix_a: 
+			filter.append('(suffix_a=%s OR suffix_b=%s)')
+			params.extend([suffix_a, suffix_a])
+		if suffix_b: 
+			filter.append('(suffix_a=%s OR suffix_b=%s)')
+			params.extend([suffix_b, suffix_b])
+		if postdir_a: 
+			filter.append('(postdir_a=%s OR postdir_b=%s)')
+			params.extend([postdir_a, postdir_a])
+		if postdir_b: 
+			filter.append('(postdir_a=%s OR postdir_b=%s)')
+			params.extend([postdir_b, postdir_b])
+		if len(filters) > 0: 
+			wherestr = ' where %s' % reduce(lambda x, y: '%s and %s' % (x, y), filters)	
+			query += wherestr
 
+		# this command is in IntersectionManager -- not sure exactly what it does here, 
+		# but I'm grabbing 'location' as an WKT, so I'm assuming that this qualification 
+		# doesn't matter.
+        # qs = qs.extra(select={"point": "AsText(location)"})
 
+		cursor.execute(query, params)
+		results = cursor.fetchall()
+		cursor.close()
+
+		return results
