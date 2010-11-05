@@ -10,7 +10,23 @@ from geocoder_models import GeocoderCache
 class GeocoderException(Exception):
     pass
 
-class AddressGeocoder:
+block_re = re.compile(r'^(\d+)[-\s]+(?:blk|block)\s+(?:of\s+)?(.*)$', re.IGNORECASE)
+intersection_re = re.compile(r'(?<=.) (?:and|\&|at|near|@|around|towards?|off|/|(?:just )?(?:north|south|east|west) of|(?:just )?past) (?=.)', re.IGNORECASE)
+class LocalGeocoder: 
+    def geocode(self, location):
+        if intersection_re.search(location):
+            raise GeocoderException('Intersection geocoding not implemented')
+        elif block_re.search(location):
+            raise GeocoderException('Block geocoding not implemented')
+        else:
+            geocoder = AddressGeocoder()
+        return geocoder.geocode(location)
+
+class PostgisAddressGeocoder:
+	def __init__(self, cxn):
+		self.connection = cxn
+		self.spelling = SpellingCorrector()
+
     def geocode(self, location_string):
         # Parse the address.
         try:
@@ -24,7 +40,13 @@ class AddressGeocoder:
             # If none were found, maybe the street was misspelled. Check that.
             if not loc_results and loc['street']:
                 try:
-                    misspelling = StreetMisspelling.objects.get(incorrect=loc['street'])
+					# Originally, StreetMisspelling.objects would hit the database for a list of corrected
+					# street names.  Now, we route this through an interface instead.  
+					# 
+                    # misspelling = StreetMisspelling.objects.get(incorrect=loc['street'])
+					#   -> should return, now, a Correction object.
+					misspelling = self.spelling.correct(incorrect=loc['street'])
+
                     loc['street'] = misspelling.correct
                 except StreetMisspelling.DoesNotExist:
                     pass
@@ -42,7 +64,13 @@ class AddressGeocoder:
                     if loc['city']:
                         city_filter = Q(left_city=loc['city']) | Q(right_city=loc['city'])
                         sided_filters.append(city_filter)
-                    b_list = Block.objects.filter(*sided_filters, **kwargs).order_by('predir', 'from_num', 'to_num')
+
+					## DJANGO REPLACE
+                    # b_list = Block.objects.filter(*sided_filters, **kwargs).order_by('predir', 'from_num', 'to_num')
+					PostgisBlockSearcher searcher = PostgisBlockSearch(self.connection)
+					b_list = searcher.search(*sided_filters, **kwargs)
+					searcher.close()
+
                     if b_list:
                         raise InvalidBlockButValidStreet(loc['number'], b_list[0].street_pretty_name, b_list)
             all_results.extend(loc_results)
@@ -63,9 +91,10 @@ class AddressGeocoder:
         if not location['number']:
             return []
 
-        # Query the blocks database.
+        # Query the blocks table in the database.
         try:
-            blocks = Block.objects.search(
+			searcher = PostgisBlockSearch(self.connection)
+            blocks = searcher.search(
                 street=location['street'],
                 number=location['number'],
                 predir=location['pre_dir'],
@@ -75,13 +104,15 @@ class AddressGeocoder:
                 state=location['state'],
                 zipcode=location['zip'],
             )
+			searcher.close()
         except Exception, e:
             # TODO: replace with Block-specific exception
             raise Exception("Road segment db query failed: %r" % e)
         return [self._build_result(location, block, geocoded_pt) for block, geocoded_pt in blocks]
 
     def _build_result(self, location, block, geocoded_pt):
-        return Address({
+		## In Django, this used to be Address(...)
+        return PostgisResult(**{
             'address': unicode(" ".join([str(s) for s in [location['number'], block.predir, block.street_pretty_name, block.postdir] if s])),
             'city': block.city.title(),
             'state': block.state,
@@ -93,14 +124,9 @@ class AddressGeocoder:
             'wkt': str(block.location),
         })
 
-block_re = re.compile(r'^(\d+)[-\s]+(?:blk|block)\s+(?:of\s+)?(.*)$', re.IGNORECASE)
-intersection_re = re.compile(r'(?<=.) (?:and|\&|at|near|@|around|towards?|off|/|(?:just )?(?:north|south|east|west) of|(?:just )?past) (?=.)', re.IGNORECASE)
-class LocalGeocoder: 
-    def geocode(self, location):
-        if intersection_re.search(location):
-            raise GeocoderException('Intersection geocoding not implemented')
-        elif block_re.search(location):
-            raise GeocoderException('Block geocoding not implemented')
-        else:
-            geocoder = AddressGeocoder()
-        return geocoder.geocode(location)
+class PostgisResult(object): 
+	def __init__(self, **kwargs):
+		for k in kwargs.keys():
+			setattr(self, k, kwargs[k])
+
+
