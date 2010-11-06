@@ -207,7 +207,7 @@ class PostgisAddressGeocoder:
 
 					## DJANGO REPLACE
                     # b_list = Block.objects.filter(*sided_filters, **kwargs).order_by('predir', 'from_num', 'to_num')
-					PostgisBlockSearcher searcher = PostgisBlockSearch(self.connection)
+					searcher = PostgisBlockSearcher(self.connection)
 					b_list = searcher.search(*sided_filters, **kwargs)
 					searcher.close()
 
@@ -262,6 +262,72 @@ class PostgisAddressGeocoder:
             'point': geocoded_pt,
             'url': block.url(),
             'wkt': str(block.location),
+        })
+
+intersection_re = re.compile(r'(?<=.) (?:and|\&|at|near|@|around|towards?|off|/|(?:just )?(?:north|south|east|west) of|(?:just )?past) (?=.)', re.IGNORECASE)
+class PostgisIntersectionGeocoder(Geocoder):
+	def __init__(self, cxn):
+		self.connection = cxn
+		self.spelling = SpellingCorrector()
+
+    def geocode(self, location_string):
+        sides = intersection_re.split(location_string)
+        if len(sides) != 2:
+            raise ParsingError("Couldn't parse intersection: %r" % location_string)
+
+        # Parse each side of the intersection to a list of possibilities.
+        # Let the ParseError exception propagate, if it's raised.
+        left_side = parse(sides[0])
+        right_side = parse(sides[1])
+
+        all_results = []
+        seen_intersections = set()
+        for street_a in left_side:
+            street_a['street'] = self.spelling.correct(street_a['street'])
+            for street_b in right_side:
+                street_b['street'] = self.spelling.correct(street_b['street'])
+                for result in self._db_lookup(street_a, street_b):
+                    if result["intersection_id"] not in seen_intersections:
+                        seen_intersections.add(result["intersection_id"])
+                        all_results.append(result)
+
+        if not all_results:
+            raise DoesNotExist("Geocoder db couldn't find this intersection: %r" % location_string)
+        elif len(all_results) == 1:
+            return all_results.pop()
+        else:
+            raise AmbiguousResult(list(all_results), "Intersections DB returned %s results" % len(all_results))
+
+    def _db_lookup(self, street_a, street_b):
+        try:
+			searcher = PostgisIntersectionSearcher(self.connection)
+            intersections = searcher.search(
+                predir_a=street_a['pre_dir'],
+                street_a=street_a['street'],
+                suffix_a=street_a['suffix'],
+                postdir_a=street_a['post_dir'],
+                predir_b=street_b['pre_dir'],
+                street_b=street_b['street'],
+                suffix_b=street_b['suffix'],
+                postdir_b=street_b['post_dir'],
+            )
+            searcher.close()
+        except Exception, e:
+            raise DoesNotExist("Intersection db query failed: %r" % e)
+        return [self._build_result(i) for i in intersections]
+
+    def _build_result(self, intersection):
+        return PostgisResult(**{
+            'address': intersection.pretty_name,
+            'city': intersection.city,
+            'state': intersection.state,
+            'zip': intersection.zip,
+            'intersection_id': intersection.id,
+            'intersection': intersection,
+            'block': None,
+            'point': intersection.location,
+            'url': intersection.url(),
+            'wkt': str(intersection.location),
         })
 
 class PostgisResult(object): 
