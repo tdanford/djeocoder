@@ -5,7 +5,12 @@ The LocationTestCase class contains both hand-written tests and a metaclass
 that auto-generates tests based on some sample data.
 """
 
-from ebpub.geocoder.parser.parsing import parse, address_combinations, ParsingError, Location
+#from ebpub.geocoder.parser.parsing import parse, address_combinations, ParsingError, Location
+from parsing import parse 
+from parsing import address_combinations
+from parsing import ParsingError 
+from parsing import Location
+
 import unittest
 
 class AutoLocationMetaclass(type):
