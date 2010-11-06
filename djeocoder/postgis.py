@@ -1,3 +1,4 @@
+from parser.parsing import normalize, parse, ParsingError
 import psycopg2
 import re
 
@@ -112,55 +113,54 @@ class PostgisBlockSearcher:
 		return final_blocks
 	
 ## Ostensibly replaces the IntersectionManager class.  
-
 class PostgisIntersectionSearcher:
-	def __init__(self,conn):
-		self.connection = conn
-	def close(self):
-		self.connection.close()
-	def search(self, predir_a=None, street_a=None, suffix_a=None, postdir_a=None, predir_b=None, street_b=None, suffix_b=None, postdir_b=None):
-		cursor = self.connection.cursor()
-		query = 'select id, pretty_name, ST_AsEWKT(location) from intersections'
-		filters = []
-		params = []
-		if predir_a: 
-			filter.append('(predir_a=%s OR predir_b=%s)')
-			params.extend([predir_a, predir_a])
-		if predir_b: 
-			filter.append('(predir_a=%s OR predir_b=%s)')
-			params.extend([predir_b, predir_b])
-		if street_a: 
-			filter.append('(street_a=%s OR street_b=%s)')
-			params.extend([street_a, street_a])
-		if street_b: 
-			filter.append('(predir_a=%s OR street_b=%s)')
-			params.extend([street_b, street_b])
-		if suffix_a: 
-			filter.append('(suffix_a=%s OR suffix_b=%s)')
-			params.extend([suffix_a, suffix_a])
-		if suffix_b: 
-			filter.append('(suffix_a=%s OR suffix_b=%s)')
-			params.extend([suffix_b, suffix_b])
-		if postdir_a: 
-			filter.append('(postdir_a=%s OR postdir_b=%s)')
-			params.extend([postdir_a, postdir_a])
-		if postdir_b: 
-			filter.append('(postdir_a=%s OR postdir_b=%s)')
-			params.extend([postdir_b, postdir_b])
-		if len(filters) > 0: 
-			wherestr = ' where %s' % reduce(lambda x, y: '%s and %s' % (x, y), filters)	
-			query += wherestr
+    def __init__(self,conn):
+        self.connection = conn
+    def close(self):
+        self.connection.close()
+    def search(self, predir_a=None, street_a=None, suffix_a=None, postdir_a=None, predir_b=None, street_b=None, suffix_b=None, postdir_b=None):
+        cursor = self.connection.cursor()
+        query = 'select id, pretty_name, ST_AsEWKT(location) from intersections'
+        filters = []
+        params = []
+        if predir_a: 
+            filters.append('(predir_a=%s OR predir_b=%s)')
+            params.extend([predir_a, predir_a])
+        if predir_b: 
+            filters.append('(predir_a=%s OR predir_b=%s)')
+            params.extend([predir_b, predir_b])
+        if street_a: 
+            filters.append('(street_a=%s OR street_b=%s)')
+            params.extend([street_a, street_a])
+        if street_b: 
+            filters.append('(predir_a=%s OR street_b=%s)')
+            params.extend([street_b, street_b])
+        if suffix_a: 
+            filters.append('(suffix_a=%s OR suffix_b=%s)')
+            params.extend([suffix_a, suffix_a])
+        if suffix_b: 
+            filters.append('(suffix_a=%s OR suffix_b=%s)')
+            params.extend([suffix_b, suffix_b])
+        if postdir_a: 
+            filters.append('(postdir_a=%s OR postdir_b=%s)')
+            params.extend([postdir_a, postdir_a])
+        if postdir_b: 
+            filters.append('(postdir_a=%s OR postdir_b=%s)')
+            params.extend([postdir_b, postdir_b])
+        if len(filters) > 0:
+            wherestr = ' where %s' % reduce(lambda x, y: '%s and %s' % (x, y), filters)
+            query += wherestr
 
-		# this command is in IntersectionManager -- not sure exactly what it does here, 
-		# but I'm grabbing 'location' as an WKT, so I'm assuming that this qualification 
-		# doesn't matter.
+        # this command is in IntersectionManager -- not sure exactly what it does here, 
+        # but I'm grabbing 'location' as an WKT, so I'm assuming that this qualification 
+        # doesn't matter.
         # qs = qs.extra(select={"point": "AsText(location)"})
-
-		cursor.execute(query, params)
-		results = cursor.fetchall()
-		cursor.close()
-
-		return results
+        print query
+        print filters
+        cursor.execute(query, params)
+        results = cursor.fetchall()
+        cursor.close()
+        return results
 
 class PostgisAddressGeocoder:
     def __init__(self, cxn):
@@ -311,7 +311,8 @@ class PostgisIntersectionGeocoder:
                 postdir_b=street_b['post_dir'],
             )
             searcher.close()
-        except Exception, e:
+#        except Exception, e:
+        except DoesNotExist, e:
             raise DoesNotExist("Intersection db query failed: %r" % e)
         return [self._build_result(i) for i in intersections]
 
@@ -334,3 +335,8 @@ class PostgisResult(object):
 		for k in kwargs.keys():
 			setattr(self, k, kwargs[k])
 
+class GeocodingException(Exception):
+    pass
+
+class DoesNotExist(GeocodingException):
+    pass
