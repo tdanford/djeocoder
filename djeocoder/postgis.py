@@ -163,10 +163,10 @@ class PostgisIntersectionSearcher:
 		return results
 
 class PostgisAddressGeocoder:
-	def __init__(self, cxn):
-		self.connection = cxn
-		self.spelling = SpellingCorrector()
-
+    def __init__(self, cxn):
+        self.connection = cxn
+        self.spelling = SpellingCorrector()
+    
     def geocode(self, location_string):
         # Parse the address.
         try:
@@ -180,13 +180,12 @@ class PostgisAddressGeocoder:
             # If none were found, maybe the street was misspelled. Check that.
             if not loc_results and loc['street']:
                 try:
-					# Originally, StreetMisspelling.objects would hit the database for a list of corrected
-					# street names.  Now, we route this through an interface instead.  
-					# 
+                    # Originally, StreetMisspelling.objects would hit the database for a list of corrected
+                    # street names.  Now, we route this through an interface instead.  
+                    # 
                     # misspelling = StreetMisspelling.objects.get(incorrect=loc['street'])
-					#   -> should return, now, a Correction object.
-					misspelling = self.spelling.correct(incorrect=loc['street'])
-
+                    #   -> should return, now, a Correction object.
+                    misspelling = self.spelling.correct(incorrect=loc['street'])
                     loc['street'] = misspelling.correct
                 except StreetMisspelling.DoesNotExist:
                     pass
@@ -207,9 +206,9 @@ class PostgisAddressGeocoder:
 
 					## DJANGO REPLACE
                     # b_list = Block.objects.filter(*sided_filters, **kwargs).order_by('predir', 'from_num', 'to_num')
-					searcher = PostgisBlockSearcher(self.connection)
-					b_list = searcher.search(*sided_filters, **kwargs)
-					searcher.close()
+                    searcher = PostgisBlockSearcher(self.connection)
+                    b_list = searcher.search(*sided_filters, **kwargs)
+                    searcher.close()
 
                     if b_list:
                         raise InvalidBlockButValidStreet(loc['number'], b_list[0].street_pretty_name, b_list)
@@ -233,7 +232,7 @@ class PostgisAddressGeocoder:
 
         # Query the blocks table in the database.
         try:
-			searcher = PostgisBlockSearch(self.connection)
+            searcher = PostgisBlockSearch(self.connection)
             blocks = searcher.search(
                 street=location['street'],
                 number=location['number'],
@@ -244,7 +243,7 @@ class PostgisAddressGeocoder:
                 state=location['state'],
                 zipcode=location['zip'],
             )
-			searcher.close()
+            searcher.close()
         except Exception, e:
             # TODO: replace with Block-specific exception
             raise Exception("Road segment db query failed: %r" % e)
@@ -265,10 +264,10 @@ class PostgisAddressGeocoder:
         })
 
 intersection_re = re.compile(r'(?<=.) (?:and|\&|at|near|@|around|towards?|off|/|(?:just )?(?:north|south|east|west) of|(?:just )?past) (?=.)', re.IGNORECASE)
-class PostgisIntersectionGeocoder(Geocoder):
-	def __init__(self, cxn):
-		self.connection = cxn
-		self.spelling = SpellingCorrector()
+class PostgisIntersectionGeocoder:
+    def __init__(self, cxn):
+        self.connection = cxn
+        self.spelling = SpellingCorrector()
 
     def geocode(self, location_string):
         sides = intersection_re.split(location_string)
@@ -300,7 +299,7 @@ class PostgisIntersectionGeocoder(Geocoder):
 
     def _db_lookup(self, street_a, street_b):
         try:
-			searcher = PostgisIntersectionSearcher(self.connection)
+            searcher = PostgisIntersectionSearcher(self.connection)
             intersections = searcher.search(
                 predir_a=street_a['pre_dir'],
                 street_a=street_a['street'],
