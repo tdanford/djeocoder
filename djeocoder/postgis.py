@@ -2,117 +2,120 @@ from parser.parsing import normalize, parse, ParsingError
 import psycopg2
 import re
 
-## Example usage: 
-## 
-## import postgis
-## import psycopg2
-## conn = psycopg2.connect('dbname=openblock user=...')
-## s = postgis.PostgisBlockSearcher(conn)
-## points = [(x[1], x[2]) for x in s.search('Tobin', 25)]
-## s.close()
+# Example usage: 
+#
+# import postgis
+# import psycopg2
+# conn = psycopg2.connect('dbname=openblock user=...')
+# s = postgis.PostgisBlockSearcher(conn)
+# points = [(x[1], x[2]) for x in s.search('Tobin', 25)]
+# s.close()
 
-class Correction: 
-	def __init__(self, incorrect, correct):
-		self.incorrect = incorrect
-		self.correct = correct
+class Correction:
+    def __init__(self, incorrect, correct):
+        self.incorrect = incorrect
+        self.correct = correct
 
 class SpellingCorrector: 
-	def correct(self, incorrect):
-		# by default, correct nothing.
-		return Correction(incorrect, incorrect)
+    def correct(self, incorrect):
+        # by default, correct nothing.
+        return Correction(incorrect, incorrect)
+
+class DoesNotExist(GeocodingException):
+    pass
 
 class PostgisBlockSearcher: 
-	def __init__(self, conn): 
-		self.conn =conn
-		self.patt = re.compile('POINT\((-?\d+\.\d+)\s+(-?\d+\.\d+)\)')
+    def __init__(self, conn): 
+        self.conn =conn
+        self.patt = re.compile('POINT\((-?\d+\.\d+)\s+(-?\d+\.\d+)\)')
+        
+    def close(self):
+        self.conn.close()
 
-	def close(self):
-		self.conn.close()
+    def contains_number(self, number, from_num, to_num, left_from_num, left_to_num, right_from_num, right_to_num):
+        parity = number % 2
+        if left_from_num and right_from_num:
+            left_parity = left_from_num % 2
+            # If this block's left side has the same parity as the right side,
+            # all bets are off -- just use the from_num and to_num.
+            if right_to_num % 2 == left_parity or left_to_num % 2 == right_from_num % 2:
+                from_num, to_num = from_num, to_num
+            elif left_parity == parity:
+                from_num, to_num = left_from_num, left_to_num
+            else:
+                from_num, to_num = right_from_num, right_to_num
+        elif left_from_num:
+            from_parity, to_parity = left_from_num % 2, left_to_num % 2
+            from_num, to_num = left_from_num, left_to_num
+            # If the parity is equal for from_num and to_num, make sure the
+            # parity of the number is the same.
+            if (from_parity == to_parity) and from_parity != parity:
+                return False, from_num, to_num
+            else:
+                from_parity, to_parity = right_from_num % 2, right_to_num % 2
+                from_num, to_num = right_from_num, right_to_num
+                # If the parity is equal for from_num and to_num, make sure the
+                # parity of the number is the same.
+                if (from_parity == to_parity) and from_parity != parity:
+                    return False, from_num, to_num
+        return (from_num <= number <= to_num), from_num, to_num
 
-	def contains_number(self, number, from_num, to_num, left_from_num, left_to_num, right_from_num, right_to_num):
-		parity = number % 2
-		if left_from_num and right_from_num:
-			left_parity = left_from_num % 2
-			# If this block's left side has the same parity as the right side,
-			# all bets are off -- just use the from_num and to_num.
-			if right_to_num % 2 == left_parity or left_to_num % 2 == right_from_num % 2:
-				from_num, to_num = from_num, to_num
-			elif left_parity == parity:
-				from_num, to_num = left_from_num, left_to_num
-			else:
-				from_num, to_num = right_from_num, right_to_num
-		elif left_from_num:
-			from_parity, to_parity = left_from_num % 2, left_to_num % 2
-			from_num, to_num = left_from_num, left_to_num
-			# If the parity is equal for from_num and to_num, make sure the
-			# parity of the number is the same.
-			if (from_parity == to_parity) and from_parity != parity:
-				return False, from_num, to_num
-			else:
-				from_parity, to_parity = right_from_num % 2, right_to_num % 2
-				from_num, to_num = right_from_num, right_to_num
-				# If the parity is equal for from_num and to_num, make sure the
-				# parity of the number is the same.
-				if (from_parity == to_parity) and from_parity != parity:
-					return False, from_num, to_num
-		return (from_num <= number <= to_num), from_num, to_num
+    def search(self,street,number=None,predir=None,suffix=None,postdir=None,city=None,state=None,zipcode=None):
+        query = 'select id, pretty_name, from_num, to_num, left_from_num, left_to_num, right_from_num, right_to_num, ST_AsEWKT(geom) from blocks where street=%s' 
+        params = [street.upper()]
+        if predir: 
+            query += ' and predir=%s' 
+            params.apepnd(predir.upper())
+        if suffix: 
+            query += ' and suffix=%s' 
+            params.append(suffix.upper())
+        if postdir: 
+            query += ' and postdir=%s' 
+            params.append(postdir.upper())
+        if city: 
+            cu = city.upper()
+            query += ' and (left_city=%s or right_city=%s)' 
+            params.extend([cu, cu])
+        if state: 
+            su = state.upper()
+            query += ' and (left_state=%s or right_state=%s)' 
+            params.extend([su, su])
+        if zipcode: 
+            query += ' and (left_zip=%s or right_zip=%s)' 
+            params.extend([zipcode, zipcode])
+        if number: 
+            query += ' and from_num <= %d and to_num >= %d' 
+            params.extend([number, number])
 
-	def search(self,street,number=None,predir=None,suffix=None,postdir=None,city=None,state=None,zipcode=None):
-		query = 'select id, pretty_name, from_num, to_num, left_from_num, left_to_num, right_from_num, right_to_num, ST_AsEWKT(geom) from blocks where street=%s' 
-		params = [street.upper()]
-		if predir: 
-			query += ' and predir=%s' 
-			params.apepnd(predir.upper())
-		if suffix: 
-			query += ' and suffix=%s' 
-			params.append(suffix.upper())
-		if postdir: 
-			query += ' and postdir=%s' 
-			params.append(postdir.upper())
-		if city: 
-			cu = city.upper()
-			query += ' and (left_city=%s or right_city=%s)' 
-			params.extend([cu, cu])
-		if state: 
-			su = state.upper()
-			query += ' and (left_state=%s or right_state=%s)' 
-			params.extend([su, su])
-		if zipcode: 
-			query += ' and (left_zip=%s or right_zip=%s)' 
-			params.extend([zipcode, zipcode])
-		if number: 
-			query += ' and from_num <= %d and to_num >= %d' 
-			params.extend([number, number])
+        cursor = self.conn.cursor()
+        cursor.execute(query, tuple(params))
 
-		cursor = self.conn.cursor()
-		cursor.execute(query, tuple(params))
+        blocks = []
+        for block in cursor.fetchall(): 
+            containment = self.contains_number(number, block[2], block[3], block[4], block[5], block[6], block[7])
+            if containment: blocks.append([block, containment[1], containment[2]])
+            
+            final_blocks = []
+            
+            for b in blocks: 
+                block = b[0]
+                from_num = b[1]
+                to_num = b[2]
+                try:
+                    fraction = (float(number) - from_num) / (to_num - from_num)
+                except ZeroDivisionError:
+                    fraction = 0.5
+                cursor.execute('SELECT ST_AsEWKT(line_interpolate_point(%s, %s))', [block[8], fraction])
+                wkt_str = cursor.fetchone()[0]
+                matcher = self.patt.search(wkt_str)
+                x = float(matcher.group(1))
+                y = float(matcher.group(2))
+                final_blocks.append((block, x, y))
+                                        
+        cursor.close()
+        return final_blocks
 
-		blocks = []
-		for block in cursor.fetchall(): 
-			containment = self.contains_number(number, block[2], block[3], block[4], block[5], block[6], block[7])
-			if containment: blocks.append([block, containment[1], containment[2]])
-
-		final_blocks = []
-
-		for b in blocks: 
-			block = b[0]
-			from_num = b[1]
-			to_num = b[2]
-			try:
-				fraction = (float(number) - from_num) / (to_num - from_num)
-			except ZeroDivisionError:
-				fraction = 0.5
-			cursor.execute('SELECT ST_AsEWKT(line_interpolate_point(%s, %s))', [block[8], fraction])
-			wkt_str = cursor.fetchone()[0]
-			matcher = self.patt.search(wkt_str)
-			x = float(matcher.group(1))
-			y = float(matcher.group(2))
-			final_blocks.append((block, x, y))
-					
-		cursor.close()
-		return final_blocks
-	
-## Ostensibly replaces the IntersectionManager class.  
+# Ostensibly replaces the IntersectionManager class.  
 class PostgisIntersectionSearcher:
     def __init__(self,conn):
         self.connection = conn
@@ -161,182 +164,3 @@ class PostgisIntersectionSearcher:
         results = cursor.fetchall()
         cursor.close()
         return results
-
-class PostgisAddressGeocoder:
-    def __init__(self, cxn):
-        self.connection = cxn
-        self.spelling = SpellingCorrector()
-    
-    def geocode(self, location_string):
-        # Parse the address.
-        try:
-            locations = parse(location_string)
-        except ParsingError, e:
-            raise
-
-        all_results = []
-        for loc in locations:
-            loc_results = self._db_lookup(loc)
-            # If none were found, maybe the street was misspelled. Check that.
-            if not loc_results and loc['street']:
-                try:
-                    # Originally, StreetMisspelling.objects would hit the database for a list of corrected
-                    # street names.  Now, we route this through an interface instead.  
-                    # 
-                    # misspelling = StreetMisspelling.objects.get(incorrect=loc['street'])
-                    #   -> should return, now, a Correction object.
-                    misspelling = self.spelling.correct(incorrect=loc['street'])
-                    loc['street'] = misspelling.correct
-                except StreetMisspelling.DoesNotExist:
-                    pass
-                else:
-                    loc_results = self._db_lookup(loc)
-                # Next, try removing the street suffix, in case an incorrect
-                # one was given.
-                if not loc_results and loc['suffix']:
-                    loc_results = self._db_lookup(dict(loc, suffix=None))
-                # Next, try looking for the street, in case the street
-                # exists but the address doesn't.
-                if not loc_results and loc['number']:
-                    kwargs = {'street': loc['street']}
-                    sided_filters = []
-                    if loc['city']:
-                        city_filter = Q(left_city=loc['city']) | Q(right_city=loc['city'])
-                        sided_filters.append(city_filter)
-
-					## DJANGO REPLACE
-                    # b_list = Block.objects.filter(*sided_filters, **kwargs).order_by('predir', 'from_num', 'to_num')
-                    searcher = PostgisBlockSearcher(self.connection)
-                    b_list = searcher.search(*sided_filters, **kwargs)
-                    searcher.close()
-
-                    if b_list:
-                        raise InvalidBlockButValidStreet(loc['number'], b_list[0].street_pretty_name, b_list)
-            all_results.extend(loc_results)
-
-        if not all_results:
-            raise DoesNotExist("Geocoder db couldn't find this location: %r" % location_string)
-        elif len(all_results) == 1:
-            return all_results[0]
-        else:
-            raise AmbiguousResult(all_results)
-
-    def _db_lookup(self, location):
-        """
-        Given a location dict as returned by parse(), looks up the address in
-        the DB. Always returns a list of Address dictionaries (or an empty list
-        if no results are found).
-        """
-        if not location['number']:
-            return []
-
-        # Query the blocks table in the database.
-        try:
-            searcher = PostgisBlockSearch(self.connection)
-            blocks = searcher.search(
-                street=location['street'],
-                number=location['number'],
-                predir=location['pre_dir'],
-                suffix=location['suffix'],
-                postdir=location['post_dir'],
-                city=location['city'],
-                state=location['state'],
-                zipcode=location['zip'],
-            )
-            searcher.close()
-        except Exception, e:
-            # TODO: replace with Block-specific exception
-            raise Exception("Road segment db query failed: %r" % e)
-        return [self._build_result(location, block, geocoded_pt) for block, geocoded_pt in blocks]
-
-    def _build_result(self, location, block, geocoded_pt):
-		## In Django, this used to be Address(...)
-        return PostgisResult(**{
-            'address': unicode(" ".join([str(s) for s in [location['number'], block.predir, block.street_pretty_name, block.postdir] if s])),
-            'city': block.city.title(),
-            'state': block.state,
-            'zip': block.zip,
-            'block': block,
-            'intersection_id': None,
-            'point': geocoded_pt,
-            'url': block.url(),
-            'wkt': str(block.location),
-        })
-
-intersection_re = re.compile(r'(?<=.) (?:and|\&|at|near|@|around|towards?|off|/|(?:just )?(?:north|south|east|west) of|(?:just )?past) (?=.)', re.IGNORECASE)
-class PostgisIntersectionGeocoder:
-    def __init__(self, cxn):
-        self.connection = cxn
-        self.spelling = SpellingCorrector()
-
-    def geocode(self, location_string):
-        sides = intersection_re.split(location_string)
-        if len(sides) != 2:
-            raise ParsingError("Couldn't parse intersection: %r" % location_string)
-
-        # Parse each side of the intersection to a list of possibilities.
-        # Let the ParseError exception propagate, if it's raised.
-        left_side = parse(sides[0])
-        right_side = parse(sides[1])
-
-        all_results = []
-        seen_intersections = set()
-        for street_a in left_side:
-            street_a['street'] = self.spelling.correct(street_a['street'])
-            for street_b in right_side:
-                street_b['street'] = self.spelling.correct(street_b['street'])
-                for result in self._db_lookup(street_a, street_b):
-                    if result["intersection_id"] not in seen_intersections:
-                        seen_intersections.add(result["intersection_id"])
-                        all_results.append(result)
-
-        if not all_results:
-            raise DoesNotExist("Geocoder db couldn't find this intersection: %r" % location_string)
-        elif len(all_results) == 1:
-            return all_results.pop()
-        else:
-            raise AmbiguousResult(list(all_results), "Intersections DB returned %s results" % len(all_results))
-
-    def _db_lookup(self, street_a, street_b):
-        try:
-            searcher = PostgisIntersectionSearcher(self.connection)
-            intersections = searcher.search(
-                predir_a=street_a['pre_dir'],
-                street_a=street_a['street'],
-                suffix_a=street_a['suffix'],
-                postdir_a=street_a['post_dir'],
-                predir_b=street_b['pre_dir'],
-                street_b=street_b['street'],
-                suffix_b=street_b['suffix'],
-                postdir_b=street_b['post_dir'],
-            )
-            searcher.close()
-#        except Exception, e:
-        except DoesNotExist, e:
-            raise DoesNotExist("Intersection db query failed: %r" % e)
-        return [self._build_result(i) for i in intersections]
-
-    def _build_result(self, intersection):
-        return PostgisResult(**{
-            'address': intersection.pretty_name,
-            'city': intersection.city,
-            'state': intersection.state,
-            'zip': intersection.zip,
-            'intersection_id': intersection.id,
-            'intersection': intersection,
-            'block': None,
-            'point': intersection.location,
-            'url': intersection.url(),
-            'wkt': str(intersection.location),
-        })
-
-class PostgisResult(object): 
-	def __init__(self, **kwargs):
-		for k in kwargs.keys():
-			setattr(self, k, kwargs[k])
-
-class GeocodingException(Exception):
-    pass
-
-class DoesNotExist(GeocodingException):
-    pass
