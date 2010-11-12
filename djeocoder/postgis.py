@@ -1,6 +1,7 @@
-from parser.parsing import normalize, parse, ParsingError
 import psycopg2
 import re
+
+from parser.parsing import normalize, parse, ParsingError
 
 class Correction:
     def __init__(self, incorrect, correct):
@@ -12,12 +13,72 @@ class SpellingCorrector:
         # by default, correct nothing.
         return Correction(incorrect, incorrect)
 
+# TODO: There's also a GeocoderException class in djeocoder.py
+# -- these should probably be merged.
 class GeocodingException(Exception):
     pass
 
 class DoesNotExist(GeocodingException):
     pass
 
+# I'd like the Searcher classes to return well-defined objects,
+# rather than raw tuples from the database.
+class LocatableResult:
+    def __init__(self, location):
+        self.location = location
+
+class BlockResult(LocatableResult):
+    def __init__(self, block_tuple):
+        LocatableResult.__init__(self, block_tuple[8])
+        self.id = block_tuple[0]
+        self.pretty_name = block_tuple[1]
+        self.from_num = block_tuple[2]
+        self.to_num = block_tuple[3]
+        self.left_from_num = block_tuple[4]
+        self.left_to_num = block_tuple[5]
+        self.right_from_num = block_tuple[6]
+        self.right_to_num = block_tuple[7]
+        
+    def contains_number(self, number):
+        parity = number % 2
+        fn, tn = self.from_num, self.to_num
+        
+        if self.left_from_num and self.right_from_num:
+            left_parity = self.left_from_num % 2
+
+            # If this block's left side has the same parity as the right side,
+            # all bets are off -- just use the from_num and to_num.
+            
+            if self.right_to_num % 2 == left_parity or self.left_to_num % 2 == self.right_from_num % 2:
+                fn, tn = self.from_num, self.to_num
+            elif left_parity == parity:
+                fn, tn = self.left_from_num, self.left_to_num
+            else:
+                fn, tn = self.right_from_num, self.right_to_num
+                
+        elif self.left_from_num:
+            from_parity, to_parity = self.left_from_num % 2, self.left_to_num % 2
+            fn, tn = self.left_from_num, self.left_to_num
+            
+            # If the parity is equal for from_num and to_num, make sure the
+            # parity of the number is the same.
+            if (from_parity == to_parity) and from_parity != parity:
+                return False, fn, tn
+            else:
+                from_parity, to_parity = self.right_from_num % 2, self.right_to_num % 2
+                fn, tn = self.right_from_num, self.right_to_num
+                
+                # If the parity is equal for from_num and to_num, make sure the
+                # parity of the number is the same.
+                if (from_parity == to_parity) and from_parity != parity:
+                    return False, fn, tn
+        return (fn <= number <= tn), fn, tn
+
+class IntersectionResult(LocatableResult):
+    def __init__(self, intersection_tuple):
+        LocatableResult.__init__(self, intersection_tuple[2])
+        self.id = intersection_tuple[0]
+        self.pretty_name = intersection_tuple[1]
 
 class PostgisBlockSearcher:
     def __init__(self, conn): 
@@ -91,32 +152,42 @@ class PostgisBlockSearcher:
             containment = self.contains_number(number, block[2], block[3], block[4], block[5], block[6], block[7])
             if containment: blocks.append([block, containment[1], containment[2]])
             
-            final_blocks = []
-            
-            for b in blocks: 
-                block = b[0]
-                from_num = b[1]
-                to_num = b[2]
-                try:
-                    fraction = (float(number) - from_num) / (to_num - from_num)
-                except ZeroDivisionError:
-                    fraction = 0.5
-                cursor.execute('SELECT ST_AsEWKT(line_interpolate_point(%s, %s))', [block[8], fraction])
-                wkt_str = cursor.fetchone()[0]
-                matcher = self.patt.search(wkt_str)
-                x = float(matcher.group(1))
-                y = float(matcher.group(2))
-                final_blocks.append((block, x, y))
+        final_blocks = []
+        
+        for b in blocks: 
+            block = b[0]
+            from_num = b[1]
+            to_num = b[2]
+            try:
+                fraction = (float(number) - from_num) / (to_num - from_num)
+            except ZeroDivisionError:
+                fraction = 0.5
+
+            # TODO: when we want to extract the geocoder from dependence on
+            # Postgis, this is one of the main dependencies: we'll need to introduce
+            # a new GIS library, so that we can do this interpolation "in code" -TWD
+            cursor.execute('SELECT ST_AsEWKT(line_interpolate_point(%s, %s))', [block[8], fraction])
+            wkt_str = cursor.fetchone()[0]
+                
+            matcher = self.patt.search(wkt_str)
+            x = float(matcher.group(1))
+            y = float(matcher.group(2))
+            final_blocks.append((block, x, y))
                                         
         cursor.close()
         return final_blocks
 
-# Ostensibly replaces the IntersectionManager class.  
+#
+# Ostensibly replaces the IntersectionManager class.
+#
 class PostgisIntersectionSearcher:
     def __init__(self,conn):
         self.connection = conn
+
     def close(self):
-        self.connection.close()
+        # self.connection.close()
+        pass
+    
     def search(self, predir_a=None, street_a=None, suffix_a=None, postdir_a=None, predir_b=None, street_b=None, suffix_b=None, postdir_b=None):
         cursor = self.connection.cursor()
         query = 'select id, pretty_name, ST_AsEWKT(location) from intersections'
@@ -154,9 +225,13 @@ class PostgisIntersectionSearcher:
         # but I'm grabbing 'location' as an WKT, so I'm assuming that this qualification 
         # doesn't matter.
         # qs = qs.extra(select={"point": "AsText(location)"})
+        
+        # TODO: can we replace these print statements with some sort of logging? 
         print query
         print filters
+
         cursor.execute(query, params)
         results = cursor.fetchall()
         cursor.close()
+
         return results
