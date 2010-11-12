@@ -2,15 +2,6 @@ from parser.parsing import normalize, parse, ParsingError
 import psycopg2
 import re
 
-# Example usage: 
-#
-# import postgis
-# import psycopg2
-# conn = psycopg2.connect('dbname=openblock user=...')
-# s = postgis.PostgisBlockSearcher(conn)
-# points = [(x[1], x[2]) for x in s.search('Tobin', 25)]
-# s.close()
-
 class Correction:
     def __init__(self, incorrect, correct):
         self.incorrect = incorrect
@@ -21,16 +12,21 @@ class SpellingCorrector:
         # by default, correct nothing.
         return Correction(incorrect, incorrect)
 
+class GeocodingException(Exception):
+    pass
+
 class DoesNotExist(GeocodingException):
     pass
 
-class PostgisBlockSearcher: 
+
+class PostgisBlockSearcher:
     def __init__(self, conn): 
         self.conn =conn
         self.patt = re.compile('POINT\((-?\d+\.\d+)\s+(-?\d+\.\d+)\)')
         
     def close(self):
-        self.conn.close()
+        # self.conn.close()
+        pass
 
     def contains_number(self, number, from_num, to_num, left_from_num, left_to_num, right_from_num, right_to_num):
         parity = number % 2
@@ -84,7 +80,7 @@ class PostgisBlockSearcher:
             query += ' and (left_zip=%s or right_zip=%s)' 
             params.extend([zipcode, zipcode])
         if number: 
-            query += ' and from_num <= %d and to_num >= %d' 
+            query += ' and from_num <= %s and to_num >= %s' 
             params.extend([number, number])
 
         cursor = self.conn.cursor()

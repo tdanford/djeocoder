@@ -12,28 +12,28 @@ class GeocoderException(Exception):
 block_re = re.compile(r'^(\d+)[-\s]+(?:blk|block)\s+(?:of\s+)?(.*)$', re.IGNORECASE)
 intersection_re = re.compile(r'(?<=.) (?:and|\&|at|near|@|around|towards?|off|/|(?:just )?(?:north|south|east|west) of|(?:just )?past) (?=.)', re.IGNORECASE)
 
-class LocalGeocoder: 
+class LocalGeocoder:
+    def __init__(self, cxn):
+        self.cxn = cxn
     def geocode(self, location):
-        cxn = ## ? 
-        
         if intersection_re.search(location):
             #raise GeocoderException('Intersection geocoding not implemented')
-            geocoder = PostgisIntersectionGeocoder(cxn)
+            geocoder = PostgisIntersectionGeocoder(self.cxn)
 
         elif block_re.search(location):
             #raise GeocoderException('Block geocoding not implemented')
-            geocoder = PostgisBlockGeocoder(cxn)
+            geocoder = PostgisBlockGeocoder(self.cxn)
 
         else:
-            geocoder = PostgisAddressGeocoder(cxn)
+            geocoder = PostgisAddressGeocoder(self.cxn)
 
         return geocoder.geocode(location)
 
-## A replacement for AddressGeocoder
+# A replacement for AddressGeocoder
 class PostgisAddressGeocoder:
-	def __init__(self, cxn):
-		self.connection = cxn
-		self.spelling = SpellingCorrector()
+    def __init__(self, cxn):
+        self.connection = cxn
+        self.spelling = SpellingCorrector()
 
     def geocode(self, location_string):
         # Parse the address.
@@ -73,11 +73,12 @@ class PostgisAddressGeocoder:
                     kwargs = {'street': loc['street']}
                     sided_filters = []
                     if loc['city']:
-                        city_filter = Q(left_city=loc['city']) | Q(right_city=loc['city'])
+                        # TODO: replace me.
+                        #city_filter = Q(left_city=loc['city']) | Q(right_city=loc['city'])
                         sided_filters.append(city_filter)
                         # DJANGOism: replace
                         # b_list = Block.objects.filter(*sided_filters, **kwargs).order_by('predir', 'from_num', 'to_num')
-                        PostgisBlockSearcher searcher = PostgisBlockSearch(self.connection)
+                        searcher = PostgisBlockSearch(self.connection)
                         b_list = searcher.search(*sided_filters, **kwargs)
                         searcher.close()
 
@@ -218,7 +219,5 @@ class PostgisResult(object):
 		for k in kwargs.keys():
 			setattr(self, k, kwargs[k])
 
-class GeocodingException(Exception):
-    pass
 
 
