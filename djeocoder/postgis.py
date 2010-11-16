@@ -3,6 +3,14 @@ import re
 
 from parser.parsing import normalize, parse, ParsingError
 
+point_pattern = re.compile('POINT\((-?\d+\.\d+)\s+(-?\d+\.\d+)\)')
+def parse_point(wkt_str):
+    matcher = point_pattern.search(wkt_str)
+    if matcher==None: raise PointParsingException(wkt_str)
+    x = float(matcher.group(1))
+    y = float(matcher.group(2))
+    return x, y
+
 class Correction:
     def __init__(self, incorrect, correct):
         self.incorrect = incorrect
@@ -21,15 +29,26 @@ class GeocodingException(Exception):
 class DoesNotExist(GeocodingException):
     pass
 
+class PointParsingException(Exception):
+    def __init__(self, str):
+        self.str = str
+    def __repr__(self):
+        return 'String \'%s\' could not be parsed into points.' % self.str
+
 # I'd like the Searcher classes to return well-defined objects,
 # rather than raw tuples from the database.
 class LocatableResult:
     def __init__(self, location):
-        self.location = location
+        self.location = parse_point(location)
+    def __repr__(self):
+        return '(%.5f,%.5f)' % (self.location[0], self.location[1])
 
 class BlockResult(LocatableResult):
-    def __init__(self, block_tuple):
-        LocatableResult.__init__(self, block_tuple[8])
+    """
+    Objects of this class are returned by the PostgisBlockSearcher.search() method. 
+    """
+    def __init__(self, block_tuple, location):
+        LocatableResult.__init__(self, location)
         self.id = block_tuple[0]
         self.pretty_name = block_tuple[1]
         self.from_num = block_tuple[2]
@@ -38,6 +57,9 @@ class BlockResult(LocatableResult):
         self.left_to_num = block_tuple[5]
         self.right_from_num = block_tuple[6]
         self.right_to_num = block_tuple[7]
+
+    def __repr__(self):
+        return '%s %s' % ( self.pretty_name, LocatableResult.__repr__(self) )
         
     def contains_number(self, number):
         parity = number % 2
@@ -75,21 +97,38 @@ class BlockResult(LocatableResult):
         return (fn <= number <= tn), fn, tn
 
 class IntersectionResult(LocatableResult):
+    """
+    Objects of this class are returned by the PostgisIntersectionSearcher.search() method.
+    """
     def __init__(self, intersection_tuple):
         LocatableResult.__init__(self, intersection_tuple[2])
         self.id = intersection_tuple[0]
         self.pretty_name = intersection_tuple[1]
+    def __repr__(self):
+        return '%s %s' % (self.pretty_name, LocatableResult.__repr__(self))
 
 class PostgisBlockSearcher:
+    """
+    Replaces the everyblock class \"BlockManager\".
+    Handles interaction with the underlying database, taking a call to the search() method, converting it into a query,
+    and then forming the response rows into BlockResult objects.
+    """
     def __init__(self, conn): 
         self.conn =conn
-        self.patt = re.compile('POINT\((-?\d+\.\d+)\s+(-?\d+\.\d+)\)')
         
     def close(self):
         # self.conn.close()
         pass
 
     def contains_number(self, number, from_num, to_num, left_from_num, left_to_num, right_from_num, right_to_num):
+        """
+        Copied almost verbatim from the corresponding EveryBlock class.
+        
+        Attempts to discover whether a particular triple of ranges
+          [ (from_num, to_num), (left_from_num, left_to_num), (right_from_num, right_to_num) ]
+        contains the given number.  The trick is that the number's parity may not match the parity of either the corresponding
+        left or right range...
+        """
         parity = number % 2
         if left_from_num and right_from_num:
             left_parity = left_from_num % 2
@@ -168,19 +207,17 @@ class PostgisBlockSearcher:
             # a new GIS library, so that we can do this interpolation "in code" -TWD
             cursor.execute('SELECT ST_AsEWKT(line_interpolate_point(%s, %s))', [block[8], fraction])
             wkt_str = cursor.fetchone()[0]
-                
-            matcher = self.patt.search(wkt_str)
-            x = float(matcher.group(1))
-            y = float(matcher.group(2))
-            final_blocks.append((block, x, y))
-                                        
+            
+            x,y = parse_point(wkt_str)
+            final_blocks.append(BlockResult(block, wkt_str))
+            
         cursor.close()
         return final_blocks
 
-#
-# Ostensibly replaces the IntersectionManager class.
-#
 class PostgisIntersectionSearcher:
+    """
+    Replaces the IntersectionManager clmass.
+    """
     def __init__(self,conn):
         self.connection = conn
 
@@ -203,7 +240,7 @@ class PostgisIntersectionSearcher:
             filters.append('(street_a=%s OR street_b=%s)')
             params.extend([street_a, street_a])
         if street_b: 
-            filters.append('(predir_a=%s OR street_b=%s)')
+            filters.append('(street_a=%s OR street_b=%s)')
             params.extend([street_b, street_b])
         if suffix_a: 
             filters.append('(suffix_a=%s OR suffix_b=%s)')
@@ -221,17 +258,18 @@ class PostgisIntersectionSearcher:
             wherestr = ' where %s' % reduce(lambda x, y: '%s and %s' % (x, y), filters)
             query += wherestr
 
-        # this command is in IntersectionManager -- not sure exactly what it does here, 
+        # This line is in IntersectionManager
+        #   qs = qs.extra(select={"point": "AsText(location)"})
+        # ... not sure exactly what it does here, 
         # but I'm grabbing 'location' as an WKT, so I'm assuming that this qualification 
-        # doesn't matter.
-        # qs = qs.extra(select={"point": "AsText(location)"})
+        # doesn't matter. -TWD
         
         # TODO: can we replace these print statements with some sort of logging? 
-        print query
-        print filters
+        # print query
+        # print filters
 
         cursor.execute(query, params)
         results = cursor.fetchall()
         cursor.close()
 
-        return results
+        return [IntersectionResult(res) for res in results]

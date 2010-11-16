@@ -15,14 +15,20 @@ import postgis
 
 def test_PostgisBlockSearcher(cxn):
     s = postgis.PostgisBlockSearcher(cxn)
-    points = [(x[1], x[2]) for x in s.search('Tobin', 25)]
-    assert len(points) > 0, 'No points returned from PostgisBlockSearcher'
-    print points
-    s.close()
+    results = s.search('Tobin', 25)
+    assert len(results) > 0, 'No results returned from PostgisBlockSearcher'
+    print results
+
+def test_PostgisIntersectionSearcher(cxn):
+    s = postgis.PostgisIntersectionSearcher(cxn)
+    results = s.search(street_a='MALVERN')
+    assert len(results) > 0, 'No results returned from PostgisIntersectionSearcher'
+    print results
 
 def main(argv):
     cxn = psycopg2.connect('dbname=openblock user=%s' % argv[0])
     test_PostgisBlockSearcher(cxn)
+    test_PostgisIntersectionSearcher(cxn)
     cxn.close()
 
 if __name__ == "__main__":
