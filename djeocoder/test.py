@@ -13,6 +13,12 @@ import postgis
 # points = [(x[1], x[2]) for x in s.search('Tobin', 25)]
 # s.close()
 
+def test_PostgisAddressGeocoder(cxn):
+    g = djeocoder.PostgisAddressGeocoder(cxn)
+    locstring = '32 Vassar Street'
+    results = g.geocode(locstring)
+    print results
+
 def test_PostgisBlockSearcher(cxn):
     s = postgis.PostgisBlockSearcher(cxn)
     results = s.search('Tobin', 25)
@@ -29,6 +35,7 @@ def main(argv):
     cxn = psycopg2.connect('dbname=openblock user=%s' % argv[0])
     test_PostgisBlockSearcher(cxn)
     test_PostgisIntersectionSearcher(cxn)
+    test_PostgisAddressGeocoder(cxn)
     cxn.close()
 
 if __name__ == "__main__":

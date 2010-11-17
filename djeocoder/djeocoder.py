@@ -6,8 +6,19 @@ import re
 # from streets import Block, StreetMisspelling, Intersection
 # from geocoder_models import GeocoderCache
 
+from postgis import PostgisBlockSearcher, PostgisIntersectionSearcher, SpellingCorrector
+
 class GeocoderException(Exception):
-    pass
+    def __init__(self, msg):
+        Exception.__init__(self, msg)
+
+class InvalidBlockButValidStreet(GeocoderException):
+    def __init__(self, number, street_name, block_list):
+        GeocoderException.__init__(self, '%s on street %s ? : %s' % (number, street_name, str(block_list)))
+
+class DoesNotExist(GeocoderException):
+    def __init__(self, msg):
+        GeocoderException.__init__(self, msg)
 
 block_re = re.compile(r'^(\d+)[-\s]+(?:blk|block)\s+(?:of\s+)?(.*)$', re.IGNORECASE)
 intersection_re = re.compile(r'(?<=.) (?:and|\&|at|near|@|around|towards?|off|/|(?:just )?(?:north|south|east|west) of|(?:just )?past) (?=.)', re.IGNORECASE)
@@ -29,8 +40,10 @@ class LocalGeocoder:
 
         return geocoder.geocode(location)
 
-# A replacement for AddressGeocoder
 class PostgisAddressGeocoder:
+    """
+    A replacement for AddressGeocoder from Openblock
+    """
     def __init__(self, cxn):
         self.connection = cxn
         self.spelling = SpellingCorrector()
@@ -45,9 +58,10 @@ class PostgisAddressGeocoder:
         all_results = []
         for loc in locations:
             loc_results = self._db_lookup(loc)
+            print 'Initial loc_results: %s -> %s' % (str(loc), str(loc_results))
 
             # If none were found, maybe the street was misspelled. Check that.
-            if not loc_results and loc['street']:
+            if (not loc_results) and loc['street']:
                 try:
                     # Originally, StreetMisspelling.objects would hit the database for a list of corrected
                     # street names.  Now, we route this through an interface instead.  
@@ -64,26 +78,28 @@ class PostgisAddressGeocoder:
                 
                 # Next, try removing the street suffix, in case an incorrect
                 # one was given.
-                if not loc_results and loc['suffix']:
+                if (not loc_results) and loc['suffix']:
                     loc_results = self._db_lookup(dict(loc, suffix=None))
                 
                 # Next, try looking for the street, in case the street
                 # exists but the address doesn't.
-                if not loc_results and loc['number']:
+                if (not loc_results) and loc['number']:
                     kwargs = {'street': loc['street']}
                     sided_filters = []
                     if loc['city']:
                         # TODO: replace me.
-                        #city_filter = Q(left_city=loc['city']) | Q(right_city=loc['city'])
-                        sided_filters.append(city_filter)
+                        # city_filter = Q(left_city=loc['city']) | Q(right_city=loc['city'])
+                        # sided_filters.append(city_filter)
+                        kwargs['city'] = loc['city']
+
                         # DJANGOism: replace
                         # b_list = Block.objects.filter(*sided_filters, **kwargs).order_by('predir', 'from_num', 'to_num')
-                        searcher = PostgisBlockSearch(self.connection)
-                        b_list = searcher.search(*sided_filters, **kwargs)
+                        
+                        searcher = PostgisBlockSearcher(self.connection)
+                        b_list = searcher.search(**kwargs)
                         searcher.close()
 
-                    if b_list:
-                        raise InvalidBlockButValidStreet(loc['number'], b_list[0].street_pretty_name, b_list)
+                        if b_list: raise InvalidBlockButValidStreet(loc['number'], b_list[0].pretty_name, b_list)
 
             all_results.extend(loc_results)
 
@@ -104,41 +120,34 @@ class PostgisAddressGeocoder:
             return []
 
         # Query the blocks table in the database.
-        try:
-            searcher = PostgisBlockSearch(self.connection)
-            blocks = searcher.search(
-                street=location['street'],
-                number=location['number'],
-                predir=location['pre_dir'],
-                suffix=location['suffix'],
-                postdir=location['post_dir'],
-                city=location['city'],
-                state=location['state'],
-                zipcode=location['zip'],
-            )
-            searcher.close()
+        searcher = PostgisBlockSearcher(self.connection)
+        # print location.keys()
+        blocks = searcher.search(**location)
+        searcher.close()
+        
+        return [self._build_result(location, block_result) for block_result in blocks]
 
-        except Exception, e:
-            # TODO: replace with Block-specific exception
-            raise Exception("Road segment db query failed: %r" % e)
-        return [self._build_result(location, block, geocoded_pt) for block, geocoded_pt in blocks]
-
-    def _build_result(self, location, block, geocoded_pt):
+    def _build_result(self, location, block):
         # In Django, this used to be Address(...)
+        # TODO : also in the original, a lot of these location['...'] fields were specified
+        # by values returned from the DB itself (normalization).  We should probably add that
+        # back in here.
         return PostgisResult(**{
-            'address': unicode(" ".join([str(s) for s in [location['number'], block.predir, block.street_pretty_name, block.postdir] if s])),
-            'city': block.city.title(),
-            'state': block.state,
-            'zip': block.zip,
-            'block': block,
-            'intersection_id': None,
-            'point': geocoded_pt,
-            'url': block.url(),
-            'wkt': str(block.location),
+            'address': unicode(" ".join([str(s) for s in [location['number'], location['predir'], block.pretty_name, location['postdir']] if s])),
+            'city': location['city'],
+            'state': location['state'],
+            'zip': location['zip'],
+            # 'block': block,
+            # 'intersection_id': None,
+            'point': block.location,
+            # 'url': block.url(),
+            # 'wkt': str(block.location),
         })
 
-## Copied from ebpub.base.BlockGeocoder
 class PostgisBlockGeocoder(PostgisAddressGeocoder):
+    """
+    Copied from ebpub.base.BlockGeocoder
+    """
     def _do_geocode(self, location_string):
         m = block_re.search(locationstring)
         if not m:
@@ -147,8 +156,10 @@ class PostgisBlockGeocoder(PostgisAddressGeocoder):
         new_location_string = ' '.join(m.groups())
         return PostgisAddressGeocoder.geocode(self, new_location_string)
 
-## A replacement for ebpub.base.IntersectionGeocoder
 class PostgisIntersectionGeocoder:
+    """
+    A replacement for ebpub.base.IntersectionGeocoder
+    """
     def __init__(self, cxn):
         self.connection = cxn
         self.spelling = SpellingCorrector()
@@ -215,9 +226,9 @@ class PostgisIntersectionGeocoder:
         })
 
 class PostgisResult(object): 
-	def __init__(self, **kwargs):
-		for k in kwargs.keys():
-			setattr(self, k, kwargs[k])
+    def __init__(self, **kwargs):
+        for k in kwargs.keys():
+            setattr(self, k, kwargs[k])
 
 
 
