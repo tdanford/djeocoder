@@ -164,3 +164,6 @@ class BlockFileLoader(PipeFileLoader):
         self.column_names = ['id', 'pretty_name', 'predir', 'street', 'street_slug', 'street_pretty_name', 'suffix', 'postdir', 'left_from_num', 'left_to_num', 'right_from_num', 'right_to_num', 'from_num', 'to_num', 'left_zip', 'right_zip', 'left_city', 'right_city', 'left_state', 'right_state', 'parent_id', 'geom']
         for i in range(len(self.column_names)):
             self.columns[self.column_names[i]] = i
+    def select(self):
+        query = 'select id, pretty_name, from_num, to_num, left_from_num, left_to_num, right_from_num, right_to_num, ST_AsEWKT(geom) from blocks where street=%s' 
+
