@@ -1,13 +1,23 @@
 import re
 import string
+import gzip
+
+def line_generator(inf):
+	line = inf.readline()
+	while line != None and len(line) > 0:
+		yield line
+		line = inf.readline()
 
 class PipeFileLoader(object):
     def __init__(self, filename):
-        inf = open(filename, 'r')
+		if filename.endswith('.gz'):
+			inf = gzip.open(filename, 'r')
+		else:
+			inf = open(filename, 'r')
         self.rows = []
         self.column_names = []
         self.columns = {}
-        for line in inf.readlines():
+		for line in line_generator(inf):
             self.rows.append([x.strip() for x in line.split('|')])
         inf.close()
     def row_as_dict(self, row):
